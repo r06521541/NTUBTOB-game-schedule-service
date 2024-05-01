@@ -17,12 +17,13 @@ class Game(Base):
     id = Column(Integer, primary_key=True)
     year = Column(Integer)
     season = Column(Integer)
-    start_datetime = Column(DateTime, default=datetime.utcnow)
+    start_datetime = Column(DateTime)
     duration = Column(Integer)
     location = Column(String)
     home_team = Column(String)
     away_team = Column(String)
     invitation_time = Column(DateTime)
+    cancellation_time = Column(DateTime)
     cancellation_announcement_time = Column(DateTime)
     
     def as_dict(self):    
@@ -33,6 +34,8 @@ class Game(Base):
             result['start_datetime'] = result['start_datetime'].isoformat()
         if 'invitation_time' in result and isinstance(result['invitation_time'], datetime):
             result['invitation_time'] = result['invitation_time'].isoformat()
+        if 'cancellation_time' in result and isinstance(result['cancellation_time'], datetime):
+            result['cancellation_time'] = result['cancellation_time'].isoformat()
         if 'cancellation_announcement_time' in result and isinstance(result['cancellation_announcement_time'], datetime):
             result['cancellation_announcement_time'] = result['cancellation_announcement_time'].isoformat()
 
@@ -44,8 +47,7 @@ engine = connect_with_connector()
 def is_game_json_valid(game_json):
     return all(field in game_json for field in required_add_game_fields)
 
-def add_game(game_json):
-    
+def add_game(game_json):    
     # 創建 Session 來處理資料庫操作
     Session = sessionmaker(bind=engine)
     session = Session()
@@ -66,30 +68,31 @@ def add_game(game_json):
     # 關閉 Session
     session.close()
 
-def is_search_game_json_valid(json):
-    required_fields = ['start_time', 'end_time']
+def is_search_game_id_json_valid(json):
+    required_fields = ['game_id']
     return all(field in json for field in required_fields)
 
-def search_games_between(json):    
+def search_by_id(json):    
     Session = sessionmaker(bind=engine)
     session = Session()
 
-    start_time = json['start_time']
-    end_time = json['end_time']
+    game_id = json['game_id']
 
     games = session.query(Game).filter(
         and_(
-            Game.start_datetime.between(start_time, end_time),
-            Game.cancellation_announcement_time == None
+            Game.id == game_id
         )
     ).all()
 
-    # 關閉 Session
     session.close()
 
     return games
 
-def search_games_for_invitation(json):    
+def is_search_game_json_valid(json):
+    required_fields = ['start_time', 'end_time']
+    return all(field in json for field in required_fields)
+
+def search_between(json):    
     Session = sessionmaker(bind=engine)
     session = Session()
 
@@ -99,14 +102,51 @@ def search_games_for_invitation(json):
     games = session.query(Game).filter(
         and_(
             Game.start_datetime.between(start_time, end_time),
-            Game.invitation_time == None,
-            Game.cancellation_announcement_time == None
+            Game.cancellation_time == None
         )
     ).all()
 
-    # 關閉 Session
     session.close()
 
+    return games
+
+def search_for_invitation(json):    
+    return search_games(json)
+
+def search_for_invited(json):    
+    return search_games(json, has_invited=True)
+
+def search_cancelled_to_announce(json):    
+    return search_games(json, has_invited=True, has_cancelled=True)
+
+def search_games(json, has_invited=False, has_cancelled=False, has_cancellation_announced=False):    
+    Session = sessionmaker(bind=engine)
+    session = Session()
+
+    start_time = json['start_time']
+    end_time = json['end_time']
+
+    filters = [
+        Game.start_datetime.between(start_time, end_time),
+    ]
+
+    if has_invited:
+        filters.append(Game.invitation_time != None)
+    else:
+        filters.append(Game.invitation_time == None)
+
+    if has_cancelled:
+        filters.append(Game.cancellation_time != None)
+    else:
+        filters.append(Game.cancellation_time == None)
+
+    if has_cancellation_announced:
+        filters.append(Game.cancellation_announcement_time != None)
+    else:
+        filters.append(Game.cancellation_announcement_time == None)
+
+    games = session.query(Game).filter(and_(*filters)).all()
+    session.close()
     return games
 
 def is_update_game_time_valid(json):
@@ -114,34 +154,24 @@ def is_update_game_time_valid(json):
     return all(field in json for field in required_fields)
 
 def update_invitation_time(json):
+    update_time_field(json, 'invitation_time')
     
-    # 創建 Session 來處理資料庫操作
+def update_cancellation_time(json):    
+    update_time_field(json, 'cancellation_time')
+
+def update_cancellation_announcement_time(json):    
+    update_time_field(json, 'cancellation_announcement_time')
+
+def update_time_field(json, field_name):
     Session = sessionmaker(bind=engine)
     session = Session()
     
-    # 加入資料庫
-    game_id = json['id']  # 替換為實際的比賽 ID
+    game_id = json['id']
     time = json['time']
 
-    session.execute(update(Game).where(Game.id == game_id).values(invitation_time=time))
+    update_data = {field_name: time}
+    
+    session.execute(update(Game).where(Game.id == game_id).values(**update_data))
     session.commit()
 
-    # 關閉 Session
     session.close()
-
-def update_cancellation_time(json):
-    
-    # 創建 Session 來處理資料庫操作
-    Session = sessionmaker(bind=engine)
-    session = Session()
-    
-    # 加入資料庫
-    game_id = json['id']  # 替換為實際的比賽 ID
-    time = json['time']
-
-    session.execute(update(Game).where(Game.id == game_id).values(cancellation_announcement_time=time))
-    session.commit()
-
-    # 關閉 Session
-    session.close()
-
